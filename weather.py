@@ -11,6 +11,10 @@ mcp = FastMCP("weather", host='0.0.0.0', port=port)
 NWS_API_BASE = "https://api.weather.gov"
 USER_AGENT = "weather-app/1.0"
 
+# Geocoding (Nominatim)
+GEOCODE_API_BASE = "https://nominatim.openstreetmap.org/search"
+GEOCODE_USER_AGENT = f"weather-app/1.0 ({os.environ.get('CONTACT_EMAIL', 'contact@example.com')})"
+
 # ------------------
 # HELPER FUNCTIONS
 # ------------------
@@ -29,6 +33,29 @@ async def make_nws_request(url: str) -> dict[str, Any] | None:
         except Exception:
             return None
 
+async def make_geocode_request(q: str) -> dict[str, Any] | None:
+    """Call Nominatim to geocode a free-form location string. Returns first match or None."""
+    params = {"q": q, "format": "json", "limit": 1}
+    headers = {
+        "User-Agent": GEOCODE_USER_AGENT,
+        "Accept": "application/json"
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(GEOCODE_API_BASE, params=params, headers=headers, timeout=30.0)
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                return None
+            item = data[0]
+            return {
+                "latitude": float(item["lat"]),
+                "longitude": float(item["lon"]),
+                "display_name": item.get("display_name")
+            }
+        except Exception:
+            return None
+
 def format_alert(feature: dict) -> str:
     """Format an alert feature into a readable string."""
     props = feature["properties"]
@@ -43,6 +70,16 @@ Instructions: {props.get('instruction', 'No specific instructions provided')}
 # ------------------
 # TOOLS
 # ------------------
+
+@mcp.tool()
+async def geocode_city(city: str) -> dict[str, Any] | str:
+    """Geocode a city/place name to latitude/longitude using Nominatim.
+    Returns {"latitude": float, "longitude": float, "display_name": str} or an error string.
+    """
+    result = await make_geocode_request(city)
+    if not result:
+        return "Unable to geocode the provided location."
+    return result
 
 @mcp.tool()
 async def get_alerts(state: str) -> str:
